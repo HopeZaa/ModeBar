@@ -1,0 +1,33 @@
+# Build products and compiler caches
+/build/
+/build-*/
+/.build/
+/DerivedData/
+*.app/
+*.dSYM/
+*.zip
+*.log
+
+# macOS and editor state
+.DS_Store
+._*
+xcuserdata/
+*.xcuserstate
+.swiftpm/xcode/
+.idea/
+.vscode/
+
+# Local settings and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.provisionprofile
+
+# Local working files and generated deliverables
+/work/
+/outputs/
