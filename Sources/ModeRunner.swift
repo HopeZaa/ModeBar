@@ -129,8 +129,8 @@ final class ModeRunner: ObservableObject {
     private func perform(_ mode: Mode) async {
         defer { isBusy = false; onStateChange?() }
         activeMode = nil
-        if mode == .clear {
-            await clearApps()
+        if mode.isQuitMode {
+            await quitApps(for: mode)
             return
         }
         let targets = settings.configuration[mode]
@@ -181,12 +181,18 @@ final class ModeRunner: ObservableObject {
         }
     }
 
-    private func clearApps() async {
-        let candidates = system.runningApps().filter {
-            QuitPolicy.includes($0, currentPID: system.currentPID, menuBarApps: settings.configuration.includeMenuBarApps)
+    private func quitApps(for mode: Mode) async {
+        let targetIDs = Set(settings.configuration[mode].compactMap(\.bundleIdentifier))
+        let candidates = system.runningApps().filter { app in
+            if mode == .stopServer {
+                guard app.pid > 0, app.pid != system.currentPID,
+                      let identifier = app.bundleIdentifier else { return false }
+                return targetIDs.contains(identifier)
+            }
+            return QuitPolicy.includes(app, currentPID: system.currentPID, menuBarApps: settings.configuration.includeMenuBarApps)
         }
-        status = "กำลังปิด \(candidates.count) แอป…"
-        detail = "หากมีงานค้าง แอปอาจขอให้บันทึกก่อนปิด"
+        status = mode == .stopServer ? "กำลังปิด Docker และ Terminal…" : "กำลังปิด \(candidates.count) แอป…"
+        detail = "แอปอาจขอยืนยันการปิดหรือบันทึกงานก่อนปิด"
         for app in candidates { _ = system.terminate(app) }
         var remaining = candidates
         for _ in 0..<60 {
@@ -199,15 +205,20 @@ final class ModeRunner: ObservableObject {
         remaining = candidates.filter { livePIDs.contains($0.pid) }
         remainingApps = remaining
         if remaining.isEmpty {
-            activeMode = .clear
-            status = "Clear Mode พร้อมแล้ว"
-            detail = candidates.isEmpty ? "ไม่มีแอปที่ต้องปิด" : "ปิดแล้ว \(candidates.count) แอป · พื้นที่พร้อมเริ่มใหม่"
+            activeMode = mode
+            if mode == .stopServer {
+                status = "Stop Server เสร็จแล้ว"
+                detail = candidates.isEmpty ? "Docker และ Terminal ปิดอยู่แล้ว" : "ปิดแล้ว \(candidates.count) แอป · Docker และ Terminal"
+            } else {
+                status = "Clear Mode พร้อมแล้ว"
+                detail = candidates.isEmpty ? "ไม่มีแอปที่ต้องปิด" : "ปิดแล้ว \(candidates.count) แอป · พื้นที่พร้อมเริ่มใหม่"
+            }
             hasError = false
         } else {
             activeMode = nil
             hasError = true
             status = "ยังเปิดอยู่ \(remaining.count) แอป"
-            detail = "อาจรอบันทึกงานหรือปฏิเสธการปิด · คลิกชื่อแอปด้านล่าง"
+            detail = "อาจรอยืนยันหรือบันทึกงาน · คลิกชื่อแอปด้านล่าง"
         }
     }
 

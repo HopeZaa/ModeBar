@@ -12,6 +12,7 @@ extension Mode {
         case .code: return Color(red: 0.42, green: 0.82, blue: 0.97)
         case .study: return Color(red: 0.72, green: 0.65, blue: 1)
         case .game: return Color(red: 0.52, green: 0.89, blue: 0.69)
+        case .stopServer: return Color(red: 1, green: 0.78, blue: 0.42)
         case .clear: return Color(red: 1, green: 0.68, blue: 0.57)
         }
     }
@@ -60,6 +61,12 @@ struct ModeButton: View {
                     if mode == .clear {
                         Text("ปิดแอปทั้งหมดที่กำลังทำงาน")
                             .font(.system(size: 11)).foregroundStyle(.secondary)
+                    } else if mode == .stopServer {
+                        HStack(spacing: 5) {
+                            ForEach(apps) { AppIcon(target: $0, size: 17) }
+                            Text("ปิด Docker และ Terminal")
+                                .font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
                     } else {
                         HStack(spacing: 4) {
                             ForEach(Array(apps.prefix(5).enumerated()), id: \.element.id) { index, app in
@@ -79,7 +86,7 @@ struct ModeButton: View {
                     }
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "arrow.up.right")
+                Image(systemName: mode == .stopServer ? "stop.circle" : "arrow.up.right")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(hovered ? mode.color : Color.secondary.opacity(0.6))
             }
@@ -93,9 +100,9 @@ struct ModeButton: View {
         .disabled(busy)
         .opacity(busy ? 0.5 : 1)
         .onHover { hovered = $0 }
-        .help(mode == .clear ? "ปิดแอปทั้งหมด ยกเว้น Finder และ ModeBar · แอปอาจขอให้บันทึกงาน" : apps.map(\.name).joined(separator: " → "))
+        .help(mode == .clear ? "ปิดแอปทั้งหมด ยกเว้น Finder และ ModeBar · แอปอาจขอให้บันทึกงาน" : mode == .stopServer ? "ปิดเฉพาะ Docker และ Terminal · แอปอาจขอให้ยืนยันก่อนปิด" : apps.map(\.name).joined(separator: " → "))
         .accessibilityLabel(mode.title)
-        .accessibilityHint(mode == .clear ? "ปิดทุกแอปที่เปิดอยู่" : apps.map(\.name).joined(separator: ", "))
+        .accessibilityHint(mode == .clear ? "ปิดทุกแอปที่เปิดอยู่" : mode == .stopServer ? "ปิดเฉพาะ Docker และ Terminal" : apps.map(\.name).joined(separator: ", "))
     }
 }
 
@@ -141,7 +148,11 @@ struct MenuPanel: View {
                 }
             }
             Rectangle().fill(.white.opacity(0.07)).frame(height: 1).padding(.vertical, 1)
-            ModeButton(mode: .clear, apps: [], selected: runner.activeMode == .clear, busy: runner.isBusy) { runner.start(.clear) }
+            VStack(spacing: 8) {
+                ModeButton(mode: .stopServer, apps: settings.configuration[.stopServer], selected: runner.activeMode == .stopServer,
+                           busy: runner.isBusy) { runner.start(.stopServer) }
+                ModeButton(mode: .clear, apps: [], selected: runner.activeMode == .clear, busy: runner.isBusy) { runner.start(.clear) }
+            }
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(alignment: .top, spacing: 7) {
@@ -286,7 +297,7 @@ struct SettingsPanel: View {
                 }
             }.font(.system(size: 12))
             HStack {
-                Text("ModeBar 1.0 · Made for your Mac").font(.system(size: 10)).foregroundStyle(.tertiary)
+                Text("ModeBar 1.1 · Made for your Mac").font(.system(size: 10)).foregroundStyle(.tertiary)
                 Spacer()
             }
         }

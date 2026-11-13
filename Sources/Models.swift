@@ -5,13 +5,15 @@ import AppKit
 import Foundation
 
 enum Mode: String, Codable, CaseIterable, Identifiable {
-    case code, study, game, clear
+    case code, study, game, stopServer, clear
     var id: String { rawValue }
+    var isQuitMode: Bool { self == .stopServer || self == .clear }
     var title: String {
         switch self {
         case .code: return "Code Mode"
         case .study: return "Study Mode"
         case .game: return "Game Mode"
+        case .stopServer: return "Stop Server"
         case .clear: return "Clear Mode"
         }
     }
@@ -20,6 +22,7 @@ enum Mode: String, Codable, CaseIterable, Identifiable {
         case .code: return "chevron.left.forwardslash.chevron.right"
         case .study: return "book.closed"
         case .game: return "gamecontroller"
+        case .stopServer: return "server.rack"
         case .clear: return "sparkles"
         }
     }
@@ -28,6 +31,7 @@ enum Mode: String, Codable, CaseIterable, Identifiable {
         case .code: return "พร้อมเขียนโค้ด"
         case .study: return "จัดพื้นที่ให้พร้อมเรียน"
         case .game: return "ได้เวลาเล่นเกม"
+        case .stopServer: return "ปิด Docker และ Terminal"
         case .clear: return "ปิดทุกแอป แล้วเริ่มใหม่"
         }
     }
@@ -43,6 +47,7 @@ struct AppTarget: Codable, Equatable, Identifiable {
     static let vscode = AppTarget(name: "VS Code", bundleIdentifier: "com.microsoft.VSCode", path: "/Applications/Visual Studio Code.app")
     static let terminal = AppTarget(name: "Terminal", bundleIdentifier: "com.apple.Terminal", path: "/System/Applications/Utilities/Terminal.app")
     static let firefox = AppTarget(name: "Firefox", bundleIdentifier: "org.mozilla.firefox", path: "/Applications/Firefox.app")
+    static let docker = AppTarget(name: "Docker", bundleIdentifier: "com.docker.docker", path: "/Applications/Docker.app")
 
     init(name: String, bundleIdentifier: String?, path: String) {
         self.name = name
@@ -81,6 +86,7 @@ struct Configuration: Codable, Equatable {
             case .code: return code
             case .study: return study
             case .game: return game
+            case .stopServer: return [.docker, .terminal]
             case .clear: return []
             }
         }
@@ -89,7 +95,7 @@ struct Configuration: Codable, Equatable {
             case .code: code = newValue
             case .study: study = newValue
             case .game: game = newValue
-            case .clear: break
+            case .stopServer, .clear: break
             }
         }
     }

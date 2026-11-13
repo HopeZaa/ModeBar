@@ -52,6 +52,8 @@ enum SelfTests {
         check(defaults.code.map(\.id) == [AppTarget.discord.id, AppTarget.vscode.id, AppTarget.terminal.id], "Code order")
         check(defaults.study.map(\.id) == [AppTarget.discord.id, AppTarget.firefox.id, AppTarget.vscode.id, AppTarget.terminal.id], "Study order / Terminal front")
         check(defaults.game == [.discord], "Game opens Discord only")
+        check(defaults[.stopServer] == [.docker, .terminal], "Stop Server targets Docker and Terminal only")
+        check(Mode.stopServer.isQuitMode && Mode.clear.isQuitMode && !Mode.code.isQuitMode, "Quit modes are identified separately from launch modes")
         let data = try! JSONEncoder().encode(defaults)
         check((try! JSONDecoder().decode(Configuration.self, from: data)) == defaults, "Configuration round trip")
         let store = SettingsStore(defaults: nil)
@@ -142,6 +144,54 @@ enum SelfTests {
         let lateRunner = ModeRunner(settings: SettingsStore(defaults: nil), system: lateQuit)
         await lateRunner.runForTesting(.clear)
         check(lateRunner.remainingApps.isEmpty && !lateRunner.hasError, "Termination in final wait is observed")
+
+        let serverApps = [
+            AppProcess(pid: 200, name: "Docker Desktop", bundleIdentifier: AppTarget.docker.bundleIdentifier, path: AppTarget.docker.path, policy: 1),
+            AppProcess(pid: 201, name: "Terminal", bundleIdentifier: AppTarget.terminal.bundleIdentifier, path: AppTarget.terminal.path, policy: 0),
+            AppProcess(pid: 202, name: "Discord", bundleIdentifier: AppTarget.discord.bundleIdentifier, path: AppTarget.discord.path, policy: 0),
+            AppProcess(pid: 203, name: "VS Code", bundleIdentifier: AppTarget.vscode.bundleIdentifier, path: AppTarget.vscode.path, policy: 0),
+            AppProcess(pid: 204, name: "Docker Helper", bundleIdentifier: "com.docker.backend", path: "/Applications/Docker.app/Contents/MacOS/com.docker.backend", policy: 2),
+            AppProcess(pid: 205, name: "Terminal", bundleIdentifier: "test.other-terminal", path: "/Applications/OtherTerminal.app", policy: 0),
+            AppProcess(pid: 206, name: "Docker", bundleIdentifier: nil, path: "/Applications/OtherDocker.app", policy: 0),
+            apps[0], apps[1]
+        ]
+        let serverSystem = FakeSystem()
+        serverSystem.processes = serverApps
+        let serverSettings = SettingsStore(defaults: nil)
+        serverSettings.configuration.includeMenuBarApps = false
+        let serverRunner = ModeRunner(settings: serverSettings, system: serverSystem)
+        await serverRunner.runForTesting(.stopServer)
+        check(serverSystem.terminated.map(\.pid) == [200, 201], "Stop Server quits Docker menu app and Terminal regardless of Clear preference")
+        check(serverSystem.launches.isEmpty && serverSystem.activations.isEmpty, "Stop Server never launches or raises target apps")
+        check(Set(serverSystem.processes.map(\.pid)) == [100, 101, 202, 203, 204, 205, 206], "Stop Server preserves other apps, helpers, and similarly named apps")
+        check(serverRunner.activeMode == .stopServer && !serverRunner.isBusy && !serverRunner.hasError, "Stop Server completion state")
+
+        let stoppedSystem = FakeSystem()
+        stoppedSystem.processes = apps
+        let stoppedRunner = ModeRunner(settings: SettingsStore(defaults: nil), system: stoppedSystem)
+        await stoppedRunner.runForTesting(.stopServer)
+        check(stoppedSystem.terminated.isEmpty && stoppedSystem.launches.isEmpty, "Already stopped apps do not need to be installed or launched")
+        check(stoppedRunner.activeMode == .stopServer && !stoppedRunner.hasError && stoppedRunner.detail == "Docker และ Terminal ปิดอยู่แล้ว", "Already stopped mode reports success")
+
+        let waitingServer = FakeSystem()
+        waitingServer.processes = serverApps
+        waitingServer.blockedPIDs = [201]
+        let waitingRunner = ModeRunner(settings: SettingsStore(defaults: nil), system: waitingServer)
+        await waitingRunner.runForTesting(.stopServer)
+        check(waitingRunner.remainingApps.map(\.pid) == [201] && waitingRunner.hasError && waitingRunner.activeMode == nil, "Terminal quit confirmation is reported as pending")
+        check(waitingServer.terminated.map(\.pid) == [200, 201] && !waitingRunner.isBusy, "Pending Stop Server does not force quit or repeat requests")
+
+        let dockerOnly = FakeSystem()
+        dockerOnly.processes = [serverApps[0]]
+        let dockerOnlyRunner = ModeRunner(settings: SettingsStore(defaults: nil), system: dockerOnly)
+        await dockerOnlyRunner.runForTesting(.stopServer)
+        check(dockerOnly.terminated.map(\.pid) == [200] && !dockerOnlyRunner.hasError, "Stop Server handles only one target running")
+
+        let ownProcess = FakeSystem()
+        ownProcess.processes = [AppProcess(pid: ownProcess.currentPID, name: "Docker", bundleIdentifier: AppTarget.docker.bundleIdentifier, path: AppTarget.docker.path, policy: 1)]
+        let ownRunner = ModeRunner(settings: SettingsStore(defaults: nil), system: ownProcess)
+        await ownRunner.runForTesting(.stopServer)
+        check(ownProcess.terminated.isEmpty, "Stop Server never terminates its own process")
 
         let concurrentSystem = FakeSystem()
         let concurrent = ModeRunner(settings: SettingsStore(defaults: nil), system: concurrentSystem)

@@ -129,18 +129,22 @@ enum Main {
         }
         if arguments.contains("--diagnostics") {
             let config = Configuration()
-            let modes = [Mode.code, .study, .game].map { mode in
-                ["mode": mode.rawValue, "apps": config[mode].map { ["name": $0.name, "path": $0.resolvedURL?.path ?? "MISSING"] }] as [String: Any]
+            let modes = [Mode.code, .study, .game, .stopServer].map { mode in
+                ["mode": mode.rawValue, "action": mode.isQuitMode ? "quit" : "launch",
+                 "apps": config[mode].map { ["name": $0.name, "path": $0.resolvedURL?.path ?? "MISSING"] }] as [String: Any]
             }
-            let report: [String: Any] = ["version": "1.0", "modes": modes, "clearPreserves": ["Finder", "ModeBar"]]
+            let report: [String: Any] = ["version": "1.1", "modes": modes, "clearPreserves": ["Finder", "ModeBar"]]
             if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
                 print(String(decoding: data, as: UTF8.self))
             }
             return
         }
         let app = NSApplication.shared
-        if let index = arguments.firstIndex(of: "--verify-mode"), arguments.count > index + 1,
-           let mode = Mode(rawValue: arguments[index + 1]), mode != .clear {
+        if let index = arguments.firstIndex(of: "--verify-mode") {
+            guard arguments.count > index + 1, let mode = Mode(rawValue: arguments[index + 1]), !mode.isQuitMode else {
+                fputs("Usage: --verify-mode code|study|game (quit modes are not supported)\n", stderr)
+                exit(2)
+            }
             app.setActivationPolicy(.accessory)
             Task {
                 let runner = ModeRunner(settings: SettingsStore(defaults: nil), system: MacSystem())
@@ -153,7 +157,8 @@ enum Main {
             app.run()
             return
         }
-        let others = NSRunningApplication.runningApplications(withBundleIdentifier: "org.modebar.ModeBar")
+        let identifier = Bundle.main.bundleIdentifier ?? "org.modebar.ModeBar"
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: identifier)
             .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
         if let existing = others.first {
             _ = existing.activate(options: [])

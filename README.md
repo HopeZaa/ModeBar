@@ -6,20 +6,23 @@ Created by [HopeZaa](https://github.com/HopeZaa).
 
 Click the stacked-layers icon in the menu bar to choose a mode. ModeBar launches apps in order and brings the last app to the foreground.
 
-<img src="docs/images/menu.png" alt="ModeBar menu showing Code, Study, Game, and Clear modes" width="392">
+<img src="docs/images/menu.png" alt="ModeBar menu showing Code, Study, Game, Stop Server, and Clear modes" width="392">
 
 ## Default modes
 
-| Mode | Launch order | Foreground app |
+| Mode | Action | Foreground app or result |
 | --- | --- | --- |
 | Code | Discord → Visual Studio Code → Terminal | Terminal |
 | Study | Discord → Firefox → Visual Studio Code → Terminal | Terminal |
 | Game | Discord | Discord |
+| Stop Server | Quit Docker Desktop and Terminal | Other apps stay open |
 | Clear | Quit running user apps, including eligible menu bar apps | Finder and ModeBar stay open |
 
 Study Mode opens [MyCourseVille](https://www.mycourseville.com/) in Firefox, using the browser's existing profile and sign-in state. The other modes do not open this website.
 
 Code, Study, and Game modes leave other running apps open. Use Clear Mode to close your workspace first if needed.
+
+**Stop Server** quits Docker Desktop and Apple Terminal only. It does not open either app if it is already closed. This action is separate from Clear Mode's menu bar app preference. If an app needs confirmation before quitting, ModeBar lists it so you can return to its prompt.
 
 Clear Mode sends normal quit requests. Apps may ask you to save unfinished work. After 15 seconds, ModeBar lists any apps that are still running so you can return to them. It does not force quit apps or discard unsaved work. System agents and nested app helpers are excluded.
 
@@ -70,7 +73,7 @@ Run the automated tests after building:
 ./build/ModeBar.app/Contents/MacOS/ModeBar --self-test
 ```
 
-The tests use a simulated system to check launch order, foreground activation, the Study URL, settings, missing apps, launch failures, overlapping clicks, and Clear Mode behavior. They do not launch or quit your apps.
+The tests use a simulated system to check launch order, foreground activation, the Study URL, settings, missing apps, launch failures, overlapping clicks, selective Stop Server shutdown, and Clear Mode behavior. They do not launch or quit your apps.
 
 Inspect the default app paths without switching modes:
 
@@ -86,7 +89,7 @@ Optional integration checks open the actual default apps and verify the foregrou
 ./build/ModeBar.app/Contents/MacOS/ModeBar --verify-mode game
 ```
 
-Clear Mode is intentionally unavailable through `--verify-mode`. `Tools/VerifyClear.swift` provides a separate test harness that restricts quit requests to two disposable fixture apps.
+Stop Server and Clear Mode are intentionally unavailable through `--verify-mode`. `Tools/VerifyClear.swift` provides a separate test harness that restricts quit requests to two disposable fixture apps.
 
 ## Project layout
 
