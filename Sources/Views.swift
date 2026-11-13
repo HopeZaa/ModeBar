@@ -162,7 +162,7 @@ struct MenuPanel: View {
                         .frame(width: 13, height: 16)
                     Text(runner.status).font(.system(size: 11, weight: .medium)).lineLimit(2)
                 }
-                Text(runner.detail).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2).padding(.leading, 20)
+                Text(runner.detail).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(2).padding(.leading, 20).help(runner.detail)
                 if !runner.remainingApps.isEmpty {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 5) {
@@ -289,6 +289,18 @@ struct SettingsPanel: View {
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                 Text("การเลือก Code, Study หรือ Game จะเปิดแอปในรายการ และเก็บแอปอื่นที่เปิดอยู่ไว้")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("สคริปต์หยุดเซิร์ฟเวอร์ก่อนปิด Docker")
+                        Text(settings.serverStopScriptPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "ยังไม่ได้เลือก · เก็บเส้นทางเฉพาะในเครื่อง")
+                            .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer()
+                    Button("เลือก…") { chooseServerStopScript() }
+                    if settings.serverStopScriptPath != nil {
+                        Button("ล้าง") { settings.serverStopScriptPath = nil }
+                    }
+                }
                 if !login.message.isEmpty {
                     HStack {
                         Text(login.message).font(.system(size: 11)).foregroundStyle(.orange)
@@ -297,7 +309,7 @@ struct SettingsPanel: View {
                 }
             }.font(.system(size: 12))
             HStack {
-                Text("ModeBar 1.1 · Made for your Mac").font(.system(size: 10)).foregroundStyle(.tertiary)
+                Text("ModeBar 1.2 · Made for your Mac").font(.system(size: 10)).foregroundStyle(.tertiary)
                 Spacer()
             }
         }
@@ -327,5 +339,22 @@ struct SettingsPanel: View {
             guard target.bundleIdentifier != Bundle.main.bundleIdentifier else { continue }
             settings.add(target, to: selectedMode)
         }
+    }
+
+    private func chooseServerStopScript() {
+        let panel = NSOpenPanel()
+        panel.title = "เลือกสคริปต์หยุดเซิร์ฟเวอร์"
+        panel.message = "Stop Server จะเรียกสคริปต์นี้ก่อนปิด Docker Desktop และ Terminal"
+        panel.allowedContentTypes = [UTType(filenameExtension: "command") ?? .shellScript, .shellScript]
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard ["command", "sh"].contains(url.pathExtension.lowercased()), FileManager.default.isReadableFile(atPath: url.path) else {
+            pickerError = "เลือกสคริปต์ .command หรือ .sh ที่อ่านได้"
+            return
+        }
+        settings.serverStopScriptPath = url.path
+        pickerError = nil
     }
 }

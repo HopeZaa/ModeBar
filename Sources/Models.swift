@@ -103,6 +103,9 @@ struct Configuration: Codable, Equatable {
 
 @MainActor
 final class SettingsStore: ObservableObject {
+    @Published var serverStopScriptPath: String? {
+        didSet { defaults?.set(serverStopScriptPath, forKey: "ModeBar.stopServerScriptPath.v1") }
+    }
     @Published var configuration: Configuration {
         didSet { save() }
     }
@@ -112,6 +115,7 @@ final class SettingsStore: ObservableObject {
 
     init(defaults: UserDefaults? = .standard) {
         self.defaults = defaults
+        serverStopScriptPath = defaults?.string(forKey: "ModeBar.stopServerScriptPath.v1")
         if let data = defaults?.data(forKey: Self.key), let value = try? JSONDecoder().decode(Configuration.self, from: data) {
             configuration = value
         } else {

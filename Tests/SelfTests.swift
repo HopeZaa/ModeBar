@@ -18,6 +18,9 @@ private final class FakeSystem: ModeSystem {
     var activationSucceeds = true
     var quitAfterWaitCount: Int?
     var waitCount = 0
+    var shutdownEvents: [String] = []
+    var scriptFailure = false
+    var dockerFailure = false
     func isAvailable(_ target: AppTarget) -> Bool { !unavailable.contains(target.id) }
     func launch(_ target: AppTarget, opening webpage: URL?) async throws -> AppProcess {
         launches.append(target.id)
@@ -29,13 +32,35 @@ private final class FakeSystem: ModeSystem {
     func runningApps() -> [AppProcess] { processes }
     func terminate(_ app: AppProcess) -> Bool {
         terminated.append(app)
+        shutdownEvents.append("quit-\(app.bundleIdentifier ?? app.name)")
         if !blockedPIDs.contains(app.pid) { processes.removeAll { $0.pid == app.pid } }
         return !blockedPIDs.contains(app.pid)
+    }
+    func runServerStopScript(at path: String) async throws {
+        shutdownEvents.append("script")
+        if scriptFailure { throw ShutdownError.scriptFailed(1) }
+    }
+    func stopDockerDesktop() async throws {
+        shutdownEvents.append("docker")
+        if dockerFailure { throw ShutdownError.dockerFailed }
+        processes.removeAll { $0.pid != currentPID && ($0.bundleIdentifier == AppTarget.docker.bundleIdentifier || $0.bundleIdentifier == "com.docker.backend") }
     }
     func wait(milliseconds: UInt64) async {
         waitCount += 1
         if waitCount == quitAfterWaitCount { processes.removeAll { blockedPIDs.contains($0.pid) } }
         await Task.yield()
+    }
+}
+
+@MainActor
+private final class FakeCommands: CommandExecuting {
+    var results: [CommandResult]
+    var requests: [CommandRequest] = []
+    var fallback = CommandResult(status: 1, output: "")
+    init(_ results: [CommandResult]) { self.results = results }
+    func run(_ command: CommandRequest) async throws -> CommandResult {
+        requests.append(command)
+        return results.isEmpty ? fallback : results.removeFirst()
     }
 }
 
@@ -161,9 +186,9 @@ enum SelfTests {
         serverSettings.configuration.includeMenuBarApps = false
         let serverRunner = ModeRunner(settings: serverSettings, system: serverSystem)
         await serverRunner.runForTesting(.stopServer)
-        check(serverSystem.terminated.map(\.pid) == [200, 201], "Stop Server quits Docker menu app and Terminal regardless of Clear preference")
+        check(serverSystem.terminated.map(\.pid) == [201] && serverSystem.shutdownEvents == ["docker", "quit-com.apple.Terminal"], "Stop Server uses Docker shutdown before quitting Terminal")
         check(serverSystem.launches.isEmpty && serverSystem.activations.isEmpty, "Stop Server never launches or raises target apps")
-        check(Set(serverSystem.processes.map(\.pid)) == [100, 101, 202, 203, 204, 205, 206], "Stop Server preserves other apps, helpers, and similarly named apps")
+        check(Set(serverSystem.processes.map(\.pid)) == [100, 101, 202, 203, 205, 206], "Docker shuts down its own backend; unrelated and similarly named apps stay open")
         check(serverRunner.activeMode == .stopServer && !serverRunner.isBusy && !serverRunner.hasError, "Stop Server completion state")
 
         let stoppedSystem = FakeSystem()
@@ -171,7 +196,7 @@ enum SelfTests {
         let stoppedRunner = ModeRunner(settings: SettingsStore(defaults: nil), system: stoppedSystem)
         await stoppedRunner.runForTesting(.stopServer)
         check(stoppedSystem.terminated.isEmpty && stoppedSystem.launches.isEmpty, "Already stopped apps do not need to be installed or launched")
-        check(stoppedRunner.activeMode == .stopServer && !stoppedRunner.hasError && stoppedRunner.detail == "Docker และ Terminal ปิดอยู่แล้ว", "Already stopped mode reports success")
+        check(stoppedRunner.activeMode == .stopServer && !stoppedRunner.hasError && stoppedSystem.shutdownEvents == ["docker"], "Docker backend is checked even when no Docker app is listed")
 
         let waitingServer = FakeSystem()
         waitingServer.processes = serverApps
@@ -179,19 +204,81 @@ enum SelfTests {
         let waitingRunner = ModeRunner(settings: SettingsStore(defaults: nil), system: waitingServer)
         await waitingRunner.runForTesting(.stopServer)
         check(waitingRunner.remainingApps.map(\.pid) == [201] && waitingRunner.hasError && waitingRunner.activeMode == nil, "Terminal quit confirmation is reported as pending")
-        check(waitingServer.terminated.map(\.pid) == [200, 201] && !waitingRunner.isBusy, "Pending Stop Server does not force quit or repeat requests")
+        check(waitingServer.terminated.map(\.pid) == [201] && !waitingRunner.isBusy, "Pending Stop Server does not force quit or repeat requests")
 
         let dockerOnly = FakeSystem()
         dockerOnly.processes = [serverApps[0]]
         let dockerOnlyRunner = ModeRunner(settings: SettingsStore(defaults: nil), system: dockerOnly)
         await dockerOnlyRunner.runForTesting(.stopServer)
-        check(dockerOnly.terminated.map(\.pid) == [200] && !dockerOnlyRunner.hasError, "Stop Server handles only one target running")
+        check(dockerOnly.terminated.isEmpty && dockerOnly.processes.isEmpty && !dockerOnlyRunner.hasError, "Docker-only shutdown uses its supported controller")
 
         let ownProcess = FakeSystem()
         ownProcess.processes = [AppProcess(pid: ownProcess.currentPID, name: "Docker", bundleIdentifier: AppTarget.docker.bundleIdentifier, path: AppTarget.docker.path, policy: 1)]
         let ownRunner = ModeRunner(settings: SettingsStore(defaults: nil), system: ownProcess)
         await ownRunner.runForTesting(.stopServer)
         check(ownProcess.terminated.isEmpty, "Stop Server never terminates its own process")
+
+        let hookedSettings = SettingsStore(defaults: nil)
+        hookedSettings.serverStopScriptPath = "/tmp/stop-server.command"
+        let hookedSystem = FakeSystem()
+        hookedSystem.processes = [serverApps[1]]
+        let hookedRunner = ModeRunner(settings: hookedSettings, system: hookedSystem)
+        await hookedRunner.runForTesting(.stopServer)
+        check(hookedSystem.shutdownEvents == ["script", "docker", "quit-com.apple.Terminal"], "Project shutdown finishes before Docker and Terminal quit")
+        check(!hookedRunner.hasError, "Configured shutdown script success")
+
+        let failedScript = FakeSystem()
+        failedScript.scriptFailure = true
+        failedScript.processes = [serverApps[1]]
+        let failedScriptRunner = ModeRunner(settings: hookedSettings, system: failedScript)
+        await failedScriptRunner.runForTesting(.stopServer)
+        check(failedScriptRunner.hasError && failedScriptRunner.activeMode == nil, "Script failure cannot be reported as success")
+        check(failedScript.shutdownEvents == ["script", "docker", "quit-com.apple.Terminal"], "Script failure still attempts Docker and Terminal shutdown")
+
+        let failedDocker = FakeSystem()
+        failedDocker.dockerFailure = true
+        failedDocker.processes = [serverApps[1]]
+        let failedDockerRunner = ModeRunner(settings: SettingsStore(defaults: nil), system: failedDocker)
+        await failedDockerRunner.runForTesting(.stopServer)
+        check(failedDockerRunner.hasError && failedDockerRunner.activeMode == nil && failedDocker.terminated.map(\.pid) == [201], "Docker failure is shown even after Terminal closes")
+
+        let absent = CommandResult(status: 1, output: "")
+        let present = CommandResult(status: 0, output: "1234")
+        let commands = FakeCommands([present, CommandResult(status: 0, output: "Stopped"), absent, absent])
+        do {
+            try await DockerDesktopStopper(commands: commands, appDirectory: "/Applications/Docker.app", pollDelay: 0).stop(using: "/tmp/docker")
+            check(commands.requests[1].arguments == ["desktop", "stop", "--timeout", "60"], "Docker uses its supported synchronous shutdown command")
+            check(commands.requests.last?.arguments == ["--context", "desktop-linux", "info", "--format", "{{.ServerVersion}}"], "Docker shutdown verifies engine is unavailable after processes exit")
+        } catch { check(false, "Supported Docker shutdown succeeds") }
+        let alreadyStopped = FakeCommands([absent, absent])
+        do {
+            try await DockerDesktopStopper(commands: alreadyStopped, appDirectory: "/Applications/Docker.app", pollDelay: 0).stop(using: "/tmp/docker")
+            check(!alreadyStopped.requests.contains { $0.arguments.contains("stop") }, "Already stopped Docker is not opened or restarted")
+        } catch { check(false, "Already stopped Docker succeeds") }
+        let commandFailure = FakeCommands([present, CommandResult(status: 1, output: "Failed")])
+        commandFailure.fallback = present
+        do { try await DockerDesktopStopper(commands: commandFailure, appDirectory: "/Applications/Docker.app", pollDelay: 0).stop(using: "/tmp/docker"); check(false, "Failed Docker command is rejected") }
+        catch { check(true, "Failed Docker command is rejected") }
+        let unverified = FakeCommands([present, CommandResult(status: 0, output: "Stopped")])
+        unverified.fallback = present
+        do { try await DockerDesktopStopper(commands: unverified, appDirectory: "/Applications/Docker.app", pollDelay: 0).stop(using: "/tmp/docker"); check(false, "Still-running Docker cannot report success") }
+        catch { check(true, "Still-running Docker cannot report success") }
+        let engineWithoutApp = FakeCommands([absent, CommandResult(status: 0, output: "29.0")])
+        do {
+            let running = try await DockerDesktopStopper(commands: engineWithoutApp, appDirectory: "/Applications/Docker.app", pollDelay: 0).isRunning(using: "/tmp/docker")
+            check(running, "Docker engine is detected without any Desktop app process")
+        } catch { check(false, "Headless Docker engine detection") }
+        let unknown = FakeCommands([CommandResult(status: 2, output: "Denied")])
+        do { _ = try await DockerDesktopStopper(commands: unknown, appDirectory: "/Applications/Docker.app").isRunning(using: "/tmp/docker"); check(false, "Unknown process state cannot be reported as stopped") }
+        catch { check(true, "Unknown process state cannot be reported as stopped") }
+        do {
+            let result = try await NativeCommandRunner().run(CommandRequest(executable: "/bin/sh", arguments: ["-c", "printf command-output; exit 7"], timeout: 5))
+            check(result.status == 7 && result.output == "command-output", "Native executor captures real exit status and output")
+        } catch { check(false, "Native command execution") }
+        do {
+            _ = try await NativeCommandRunner().run(CommandRequest(executable: "/bin/sh", arguments: ["-c", "sleep 3"], timeout: 0.05))
+            check(false, "Native executor enforces timeout")
+        } catch { check(true, "Native executor enforces timeout") }
 
         let concurrentSystem = FakeSystem()
         let concurrent = ModeRunner(settings: SettingsStore(defaults: nil), system: concurrentSystem)

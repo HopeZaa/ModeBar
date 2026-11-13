@@ -6,12 +6,13 @@
     <key>CFBundleExecutable</key><string>ModeBar</string>
     <key>CFBundleIdentifier</key><string>org.modebar.ModeBar</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.1</string>
-    <key>CFBundleVersion</key><string>2</string>
+    <key>CFBundleShortVersionString</key><string>1.2</string>
+    <key>CFBundleVersion</key><string>3</string>
     <key>CFBundleIconFile</key><string>ModeBar</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>NSDesktopFolderUsageDescription</key><string>Stop Server runs your selected server shutdown script to stop its background services.</string>
     <key>NSHumanReadableCopyright</key><string>ModeBar · 2026</string>
 </dict></plist>

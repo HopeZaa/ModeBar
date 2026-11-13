@@ -133,13 +133,25 @@ enum Main {
                 ["mode": mode.rawValue, "action": mode.isQuitMode ? "quit" : "launch",
                  "apps": config[mode].map { ["name": $0.name, "path": $0.resolvedURL?.path ?? "MISSING"] }] as [String: Any]
             }
-            let report: [String: Any] = ["version": "1.1", "modes": modes, "clearPreserves": ["Finder", "ModeBar"]]
+            let report: [String: Any] = ["version": "1.2", "modes": modes, "clearPreserves": ["Finder", "ModeBar"]]
             if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
                 print(String(decoding: data, as: UTF8.self))
             }
             return
         }
         let app = NSApplication.shared
+        if arguments.contains("--stop-server") {
+            app.setActivationPolicy(.accessory)
+            Task {
+                let runner = ModeRunner(settings: SettingsStore(), system: MacSystem())
+                await runner.runForTesting(.stopServer)
+                print(runner.status)
+                print(runner.detail)
+                exit(runner.hasError ? 1 : 0)
+            }
+            app.run()
+            return
+        }
         if let index = arguments.firstIndex(of: "--verify-mode") {
             guard arguments.count > index + 1, let mode = Mode(rawValue: arguments[index + 1]), !mode.isQuitMode else {
                 fputs("Usage: --verify-mode code|study|game (quit modes are not supported)\n", stderr)

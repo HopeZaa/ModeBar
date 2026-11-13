@@ -21,6 +21,8 @@ private final class FixtureSystem: ModeSystem {
         terminated.append(app)
         return mac.terminate(app)
     }
+    func runServerStopScript(at path: String) async throws { preconditionFailure("The Clear fixture harness cannot run server scripts") }
+    func stopDockerDesktop() async throws { preconditionFailure("The Clear fixture harness cannot stop Docker Desktop") }
     func wait(milliseconds: UInt64) async { await mac.wait(milliseconds: milliseconds) }
 }
 

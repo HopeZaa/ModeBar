@@ -22,7 +22,9 @@ Study Mode opens [MyCourseVille](https://www.mycourseville.com/) in Firefox, usi
 
 Code, Study, and Game modes leave other running apps open. Use Clear Mode to close your workspace first if needed.
 
-**Stop Server** quits Docker Desktop and Apple Terminal only. It does not open either app if it is already closed. This action is separate from Clear Mode's menu bar app preference. If an app needs confirmation before quitting, ModeBar lists it so you can return to its prompt.
+**Stop Server** first runs an optional local server shutdown script, then stops Docker Desktop through its supported CLI, verifies that Desktop processes and its local engine have stopped, and quits Apple Terminal. It works even when Docker's backend is running without a normal app window. It does not start Docker or Terminal if they are already closed. This action is separate from Clear Mode's menu bar app preference.
+
+If your server launcher starts detached services such as tunnels or virtual machines, choose its matching `.command` or `.sh` stop script in Mode Settings. Closing Terminal alone does not stop detached services. The chosen script finishes before Docker shuts down, so it can stop its containers and other background work normally. Failures and pending Terminal quit confirmations are reported instead of claiming success.
 
 Clear Mode sends normal quit requests. Apps may ask you to save unfinished work. After 15 seconds, ModeBar lists any apps that are still running so you can return to them. It does not force quit apps or discard unsaved work. System agents and nested app helpers are excluded.
 
@@ -35,6 +37,7 @@ Open **ตั้งค่าโหมด** (Mode Settings) at the bottom of the 
 - Restore each mode's defaults.
 - Choose whether Clear Mode also quits menu bar apps.
 - Enable launch at login.
+- Choose the local server stop script that runs before Docker Desktop shuts down. Its path is saved only on your Mac.
 
 The interface currently uses Thai labels and English mode names. Hold Command and drag the menu bar icon to reposition it.
 
@@ -91,6 +94,14 @@ Optional integration checks open the actual default apps and verify the foregrou
 
 Stop Server and Clear Mode are intentionally unavailable through `--verify-mode`. `Tools/VerifyClear.swift` provides a separate test harness that restricts quit requests to two disposable fixture apps.
 
+For an intentional real shutdown using the saved settings, run:
+
+```sh
+./build/ModeBar.app/Contents/MacOS/ModeBar --stop-server
+```
+
+This runs the same shutdown path as the menu button, including the configured server stop script. Docker Desktop's CLI must be available with the installed Docker Desktop version.
+
 ## Project layout
 
 ```text
@@ -107,7 +118,7 @@ LICENSE        GNU General Public License v3.0
 
 ModeBar stores settings locally in macOS UserDefaults. It does not read browser profiles, passwords, cookies, or MyCourseVille account data, and it does not collect telemetry or make direct network requests. Study Mode asks Firefox to open the public MyCourseVille URL; the browser and website handle the connection and sign-in.
 
-The public source uses the generic bundle identifier `org.modebar.ModeBar`. Build artifacts, compiler caches, local configuration, signing credentials, and common editor metadata are excluded by `.gitignore`. The preview image is rendered from the app's own interface and contains no browser content or account information.
+The public source uses the generic bundle identifier `org.modebar.ModeBar`. Server stop script paths stay in local UserDefaults; no personal project path is hardcoded in the app. A selected script performs its own normal shutdown operations with your user account. Build artifacts, compiler caches, local configuration, signing credentials, and common editor metadata are excluded by `.gitignore`. The preview image is rendered from the app's own interface and contains no browser content or account information.
 
 Accessibility, Screen Recording, and Full Disk Access permissions are not required for the implemented mode actions.
 

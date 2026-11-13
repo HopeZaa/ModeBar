@@ -23,6 +23,8 @@ protocol ModeSystem: AnyObject {
     func activate(_ app: AppProcess) -> Bool
     func runningApps() -> [AppProcess]
     func terminate(_ app: AppProcess) -> Bool
+    func runServerStopScript(at path: String) async throws
+    func stopDockerDesktop() async throws
     func wait(milliseconds: UInt64) async
 }
 
@@ -34,6 +36,7 @@ extension ModeSystem {
 
 @MainActor
 final class MacSystem: ModeSystem {
+    private let commands = NativeCommandRunner()
     var currentPID: Int32 { ProcessInfo.processInfo.processIdentifier }
     func isAvailable(_ target: AppTarget) -> Bool { target.resolvedURL != nil }
 
@@ -86,6 +89,20 @@ final class MacSystem: ModeSystem {
         NSRunningApplication(processIdentifier: app.pid)?.terminate() ?? false
     }
 
+    func runServerStopScript(at path: String) async throws {
+        guard FileManager.default.isReadableFile(atPath: path) else { throw ShutdownError.missingScript }
+        let request = CommandRequest(executable: "/bin/zsh", arguments: [path], workingDirectory: URL(fileURLWithPath: path).deletingLastPathComponent().path)
+        let result = try await commands.run(request)
+        guard result.status == 0 else { throw ShutdownError.scriptFailed(result.status) }
+    }
+
+    func stopDockerDesktop() async throws {
+        guard let appURL = AppTarget.docker.resolvedURL else { return }
+        let executable = appURL.appendingPathComponent("Contents/Resources/bin/docker").path
+        guard FileManager.default.isExecutableFile(atPath: executable) else { throw ShutdownError.dockerUnavailable }
+        try await DockerDesktopStopper(commands: commands, appDirectory: appURL.path).stop(using: executable)
+    }
+
     func wait(milliseconds: UInt64) async { try? await Task.sleep(nanoseconds: milliseconds * 1_000_000) }
 }
 
@@ -129,8 +146,12 @@ final class ModeRunner: ObservableObject {
     private func perform(_ mode: Mode) async {
         defer { isBusy = false; onStateChange?() }
         activeMode = nil
-        if mode.isQuitMode {
-            await quitApps(for: mode)
+        if mode == .stopServer {
+            await stopServer()
+            return
+        }
+        if mode == .clear {
+            await clearApps()
             return
         }
         let targets = settings.configuration[mode]
@@ -181,17 +202,11 @@ final class ModeRunner: ObservableObject {
         }
     }
 
-    private func quitApps(for mode: Mode) async {
-        let targetIDs = Set(settings.configuration[mode].compactMap(\.bundleIdentifier))
+    private func clearApps() async {
         let candidates = system.runningApps().filter { app in
-            if mode == .stopServer {
-                guard app.pid > 0, app.pid != system.currentPID,
-                      let identifier = app.bundleIdentifier else { return false }
-                return targetIDs.contains(identifier)
-            }
-            return QuitPolicy.includes(app, currentPID: system.currentPID, menuBarApps: settings.configuration.includeMenuBarApps)
+            QuitPolicy.includes(app, currentPID: system.currentPID, menuBarApps: settings.configuration.includeMenuBarApps)
         }
-        status = mode == .stopServer ? "กำลังปิด Docker และ Terminal…" : "กำลังปิด \(candidates.count) แอป…"
+        status = "กำลังปิด \(candidates.count) แอป…"
         detail = "แอปอาจขอยืนยันการปิดหรือบันทึกงานก่อนปิด"
         for app in candidates { _ = system.terminate(app) }
         var remaining = candidates
@@ -205,20 +220,52 @@ final class ModeRunner: ObservableObject {
         remaining = candidates.filter { livePIDs.contains($0.pid) }
         remainingApps = remaining
         if remaining.isEmpty {
-            activeMode = mode
-            if mode == .stopServer {
-                status = "Stop Server เสร็จแล้ว"
-                detail = candidates.isEmpty ? "Docker และ Terminal ปิดอยู่แล้ว" : "ปิดแล้ว \(candidates.count) แอป · Docker และ Terminal"
-            } else {
-                status = "Clear Mode พร้อมแล้ว"
-                detail = candidates.isEmpty ? "ไม่มีแอปที่ต้องปิด" : "ปิดแล้ว \(candidates.count) แอป · พื้นที่พร้อมเริ่มใหม่"
-            }
+            activeMode = .clear
+            status = "Clear Mode พร้อมแล้ว"
+            detail = candidates.isEmpty ? "ไม่มีแอปที่ต้องปิด" : "ปิดแล้ว \(candidates.count) แอป · พื้นที่พร้อมเริ่มใหม่"
             hasError = false
         } else {
             activeMode = nil
             hasError = true
             status = "ยังเปิดอยู่ \(remaining.count) แอป"
             detail = "อาจรอยืนยันหรือบันทึกงาน · คลิกชื่อแอปด้านล่าง"
+        }
+    }
+
+    private func stopServer() async {
+        var errors: [String] = []
+        if let script = settings.serverStopScriptPath {
+            status = "กำลังหยุดงานเซิร์ฟเวอร์เบื้องหลัง…"
+            detail = "รอสคริปต์หยุดเซิร์ฟเวอร์ทำงานเสร็จ"
+            do { try await system.runServerStopScript(at: script) }
+            catch { errors.append(error.localizedDescription) }
+        }
+        status = "กำลังปิด Docker Desktop…"
+        detail = "กำลังหยุด Docker engine และตรวจสถานะ"
+        do { try await system.stopDockerDesktop() }
+        catch { errors.append(error.localizedDescription) }
+
+        status = "กำลังปิด Terminal…"
+        let terminals = system.runningApps().filter {
+            $0.pid > 0 && $0.pid != system.currentPID && $0.bundleIdentifier == AppTarget.terminal.bundleIdentifier
+        }
+        for terminal in terminals { _ = system.terminate(terminal) }
+        for _ in 0..<60 {
+            let livePIDs = Set(system.runningApps().map(\.pid))
+            if !terminals.contains(where: { livePIDs.contains($0.pid) }) { break }
+            await system.wait(milliseconds: 250)
+        }
+        let livePIDs = Set(system.runningApps().map(\.pid))
+        remainingApps = terminals.filter { livePIDs.contains($0.pid) }
+        if !remainingApps.isEmpty { errors.append("Terminal ยังรอยืนยันการปิด · คลิกชื่อแอปด้านล่าง") }
+        hasError = !errors.isEmpty
+        if errors.isEmpty {
+            activeMode = .stopServer
+            status = "Stop Server เสร็จแล้ว"
+            detail = settings.serverStopScriptPath == nil ? "Docker Desktop และ Terminal ปิดแล้ว" : "หยุดงานเซิร์ฟเวอร์แล้ว · Docker Desktop และ Terminal ปิดแล้ว"
+        } else {
+            status = "Stop Server ยังไม่เสร็จ"
+            detail = errors.joined(separator: " · ")
         }
     }
 
